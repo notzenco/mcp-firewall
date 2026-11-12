@@ -1,0 +1,4 @@
+/target
+/audit/
+*.jsonl
+!examples/**/*.jsonl
