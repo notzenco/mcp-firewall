@@ -258,7 +258,11 @@ impl Summary {
         if let Some(decision) = event.get("decision").and_then(Value::as_str) {
             self.by_decision.add(decision);
         }
-        if let Some(tool) = event.get("tool").and_then(Value::as_str) {
+        // Only the call itself counts towards a tool's total; the refusal
+        // that follows it is the same call.
+        if kind == "tool_call"
+            && let Some(tool) = event.get("tool").and_then(Value::as_str)
+        {
             self.by_tool.add(tool);
         }
 
@@ -422,6 +426,34 @@ mod tests {
 
         let rendered = summary.render();
         assert!(rendered.contains("tool_definition_changed"), "{rendered}");
+    }
+
+    #[test]
+    fn only_the_call_counts_towards_a_tools_total() {
+        // A denied call produces a tool_call, an alert and a
+        // tool_call_denied, all carrying the tool name. Counting every
+        // event with a `tool` field would report one call as three.
+        let path = temp_path("by-tool");
+        let _ = std::fs::remove_file(&path);
+        let mut log = AuditLog::open(&path).unwrap();
+        log.write(
+            &Event::new("tool_call", Severity::Info)
+                .with("tool", "read_file")
+                .with("decision", "deny"),
+        )
+        .unwrap();
+        log.write(
+            &Event::new("alert", Severity::Warning)
+                .with("tool", "read_file")
+                .with("detail", "carries a credential"),
+        )
+        .unwrap();
+        log.write(&Event::new("tool_call_denied", Severity::Warning).with("tool", "read_file"))
+            .unwrap();
+        drop(log);
+
+        let summary = Summary::from_file(&path).unwrap();
+        assert_eq!(summary.by_tool.get("read_file"), 1);
     }
 
     #[test]
