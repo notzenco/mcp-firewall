@@ -20,6 +20,7 @@ fn main() {
     let mut result = "plain".to_string();
     let mut instructions: Option<String> = None;
     let mut record: Option<PathBuf> = None;
+    let mut progress = false;
 
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -29,6 +30,7 @@ fn main() {
             "--result" => result = arguments.next().unwrap_or_default(),
             "--instructions" => instructions = arguments.next(),
             "--record" => record = arguments.next().map(PathBuf::from),
+            "--progress" => progress = true,
             other => {
                 eprintln!("fake-mcp-server: unknown argument `{other}`");
                 std::process::exit(2);
@@ -103,6 +105,16 @@ fn main() {
                 json!({"resultType": "complete"})
             }
         };
+
+        if progress && method == "tools/call" {
+            let notification = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {"progressToken": "tok", "progress": 1},
+            });
+            writeln!(stdout, "{notification}").expect("the notification can be written");
+            stdout.flush().expect("the notification can be flushed");
+        }
 
         let response = json!({"jsonrpc": "2.0", "id": id, "result": result});
         writeln!(stdout, "{response}").expect("the response can be written");

@@ -593,3 +593,44 @@ fn the_audit_command_can_fail_on_a_severity() {
 
     assert_eq!(output.status.code(), Some(2), "{output:?}");
 }
+
+#[test]
+fn a_server_notification_is_forwarded_and_logged() {
+    let mut session = Session::start(PERMISSIVE, &["--progress"]);
+    // read_response skips over the progress notification, which proves it
+    // reached the client; the audit log must prove it was seen at all.
+    let _ = session.request(
+        "tools/call",
+        1,
+        json!({"name": "echo", "arguments": {"message": "hi"}}),
+    );
+
+    let events = session.audit();
+    assert!(
+        events.iter().any(|event| {
+            event["event"] == "message"
+                && event["direction"] == "server_to_client"
+                && event["method"] == "notifications/progress"
+        }),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_batch_is_forwarded_but_flagged_as_uninspected() {
+    let mut session = Session::start(PERMISSIVE, &[]);
+    // MCP has no JSON-RPC batches. The line is forwarded verbatim so the
+    // peer's stream stays intact, but it must stand out in the log: an
+    // uninspected tools/call could be hiding in it.
+    session.send_raw(r#"[{"jsonrpc":"2.0","id":9,"method":"ping"}]"#);
+    let _ = session.request("ping", 1, json!({}));
+
+    let events = session.audit();
+    assert!(
+        events
+            .iter()
+            .any(|event| { event["severity"] == "warning" && event["parsed"] == false }),
+        "{events:?}"
+    );
+    assert!(session.received().contains("\"method\":\"ping\""));
+}

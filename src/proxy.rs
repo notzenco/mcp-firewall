@@ -282,6 +282,22 @@ impl Context {
             }
         };
 
+        if message.kind == jsonrpc::Kind::Other {
+            // Valid JSON but not a JSON-RPC message (for example a batch,
+            // which MCP does not support). It cannot be inspected, and a
+            // tools/call could be hiding inside it, so it is flagged
+            // rather than logged as ordinary traffic. Dropping it would
+            // still break the peer's stream, so it is forwarded verbatim.
+            self.log(
+                Event::new("message", Severity::Warning)
+                    .with("direction", "client_to_server")
+                    .with("parsed", false)
+                    .with("message", "not a JSON-RPC message; forwarded uninspected"),
+            );
+            self.forward_to_server(raw);
+            return;
+        }
+
         if message.is_request() && message.has_method(jsonrpc::METHOD_TOOLS_CALL) {
             self.handle_tool_call(raw, &message);
             return;
@@ -320,6 +336,17 @@ impl Context {
             }
         };
 
+        if message.kind == jsonrpc::Kind::Other {
+            self.log(
+                Event::new("message", Severity::Warning)
+                    .with("direction", "server_to_client")
+                    .with("parsed", false)
+                    .with("message", "not a JSON-RPC message; forwarded uninspected"),
+            );
+            self.forward_to_client(raw);
+            return;
+        }
+
         if message.is_response() {
             self.scan_server_instructions(&message);
             let method = message
@@ -333,19 +360,41 @@ impl Context {
                 })
                 .unwrap_or_default();
 
-            if method == jsonrpc::METHOD_TOOLS_LIST {
+            if method == jsonrpc::METHOD_TOOLS_LIST && message.tool_list().is_some() {
                 if let Some(replacement) = self.handle_tool_list(&message) {
                     self.forward_to_client(&replacement);
                     return;
                 }
             } else if (method == jsonrpc::METHOD_TOOLS_CALL
                 || method == jsonrpc::METHOD_RESOURCES_READ)
-                && let Some(replacement) = self.handle_tool_result(&method, &message)
+                && (message.result.is_some() || message.error.is_some())
             {
-                self.forward_to_client(&replacement);
-                return;
+                if let Some(replacement) = self.handle_tool_result(&method, &message) {
+                    self.forward_to_client(&replacement);
+                    return;
+                }
+            } else {
+                self.log(
+                    Event::new("message", Severity::Info)
+                        .with("direction", "server_to_client")
+                        .with("method", method)
+                        .with("id", message.id.clone().unwrap_or(Value::Null)),
+                );
             }
+            self.forward_to_client(raw);
+            return;
         }
+
+        // A notification, or (in legacy revisions) a server-initiated
+        // request. Both are forwarded untouched; until now they were not
+        // logged at all, so server traffic could cross the proxy without
+        // leaving a trace.
+        self.log(
+            Event::new("message", Severity::Info)
+                .with("direction", "server_to_client")
+                .with("method", message.method.clone().unwrap_or_default())
+                .with("id", message.id.clone().unwrap_or(Value::Null)),
+        );
         self.forward_to_client(raw);
     }
 
@@ -645,13 +694,17 @@ impl Context {
     ///
     /// Returns a replacement message when the result was rewritten.
     fn handle_tool_result(&self, method: &str, message: &Message) -> Option<String> {
-        let result = message.result.as_ref()?;
-        let findings = self.scanner.scan_value(result);
+        // An error response is scanned too: its message is server-chosen
+        // text the agent will read, exactly like a result.
+        let is_error = message.result.is_none();
+        let payload = message.result.as_ref().or(message.error.as_ref())?;
+        let findings = self.scanner.scan_value(payload);
 
         self.log(
             Event::new("tool_result", Severity::Info)
                 .with("method", method)
                 .with("id", message.id.clone().unwrap_or(Value::Null))
+                .with("error", is_error)
                 .with("findings", findings_json(&findings)),
         );
 
