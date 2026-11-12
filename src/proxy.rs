@@ -321,6 +321,7 @@ impl Context {
         };
 
         if message.is_response() {
+            self.scan_server_instructions(&message);
             let method = message
                 .id
                 .as_ref()
@@ -565,7 +566,10 @@ impl Context {
         None
     }
 
-    /// Scans tool descriptions for injected instructions.
+    /// Scans tool definitions for injected instructions.
+    ///
+    /// The whole definition is scanned, not only the description: a schema
+    /// property description is just as capable of steering the model.
     fn scan_tool_descriptions(&self, tools: &[Value]) {
         for tool in tools {
             let name = tool
@@ -573,13 +577,7 @@ impl Context {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let mut findings = Vec::new();
-            for field in ["description", "title"] {
-                let Some(text) = tool.get(field).and_then(Value::as_str) else {
-                    continue;
-                };
-                findings.extend(self.scanner.scan_text(text));
-            }
+            let findings = self.scanner.scan_value(tool);
             if findings.is_empty() {
                 continue;
             }
@@ -590,6 +588,29 @@ impl Context {
                     .with("findings", findings_json(&findings)),
             );
         }
+    }
+
+    /// Scans the natural language instructions a server attaches to its
+    /// results, which the specification calls `instructions`.
+    fn scan_server_instructions(&self, message: &Message) {
+        let Some(instructions) = message
+            .result
+            .as_ref()
+            .and_then(|result| result.get("instructions"))
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        let findings = self.scanner.scan_text(instructions);
+        if findings.is_empty() {
+            return;
+        }
+        self.log(
+            Event::new("alert", Severity::Error)
+                .with("kind", "poisoned_server_instructions")
+                .with("id", message.id.clone().unwrap_or(Value::Null))
+                .with("findings", findings_json(&findings)),
+        );
     }
 
     /// Scans a tool result and, when the policy says so, redacts it.

@@ -117,9 +117,12 @@ pub fn fingerprints(tools: &[Value]) -> Vec<ToolFingerprint> {
 /// The hash of a whole tool list.
 ///
 /// It is the hash of the fingerprints, so a change to any tool changes it,
-/// and adding or removing a tool changes it too.
+/// and adding or removing a tool changes it too. The fingerprints are
+/// sorted by name first, so a server that reorders its tools does not look
+/// like a server that changed them.
 pub fn tools_hash(tools: &[Value]) -> String {
-    let prints = fingerprints(tools);
+    let mut prints = fingerprints(tools);
+    prints.sort_by(|a, b| a.name.cmp(&b.name));
     let mut canonical = String::from("[");
     for (i, print) in prints.iter().enumerate() {
         if i > 0 {
@@ -250,6 +253,13 @@ mod tests {
         let before = vec![tool("read_file", "reads")];
         let after = vec![tool("read_file", "reads"), tool("write_file", "writes")];
         assert_ne!(tools_hash(&before), tools_hash(&after));
+    }
+
+    #[test]
+    fn the_hash_does_not_depend_on_the_order_of_the_tools() {
+        let first = vec![tool("read_file", "reads"), tool("write_file", "writes")];
+        let second = vec![tool("write_file", "writes"), tool("read_file", "reads")];
+        assert_eq!(tools_hash(&first), tools_hash(&second));
     }
 
     #[test]

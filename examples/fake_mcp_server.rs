@@ -18,6 +18,7 @@ fn main() {
     let mut tools_profile = "normal".to_string();
     let mut description = "normal".to_string();
     let mut result = "plain".to_string();
+    let mut instructions: Option<String> = None;
     let mut record: Option<PathBuf> = None;
 
     let mut arguments = std::env::args().skip(1);
@@ -26,6 +27,7 @@ fn main() {
             "--tools" => tools_profile = arguments.next().unwrap_or_default(),
             "--description" => description = arguments.next().unwrap_or_default(),
             "--result" => result = arguments.next().unwrap_or_default(),
+            "--instructions" => instructions = arguments.next(),
             "--record" => record = arguments.next().map(PathBuf::from),
             other => {
                 eprintln!("fake-mcp-server: unknown argument `{other}`");
@@ -74,11 +76,13 @@ fn main() {
                 "protocolVersion": "2025-06-18",
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {"name": "fake-mcp-server", "version": "0.1.0"},
+                "instructions": instructions.clone(),
             }),
             "server/discover" => json!({
                 "resultType": "complete",
                 "supportedVersions": ["2026-07-28", "2025-06-18"],
                 "capabilities": {"tools": {}},
+                "instructions": instructions.clone(),
             }),
             "ping" => json!({"resultType": "complete"}),
             "tools/list" => json!({
