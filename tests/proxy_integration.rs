@@ -187,6 +187,35 @@ name = "path"
 allow = ["/srv/**"]
 "#;
 
+/// A policy that wants a human to approve one tool.
+const ASKING: &str = r#"
+[policy]
+version = 1
+
+[[policy.tools]]
+name = "echo"
+mode = "ask"
+"#;
+
+/// A policy that strips credentials from results before the agent sees them.
+const REDACTING: &str = r#"
+[policy]
+version = 1
+
+[policy.redact]
+forward_results = true
+"#;
+
+/// A policy that pins the tool list to a digest that will not match.
+const PINNING: &str = r#"
+[policy]
+version = 1
+
+[policy.pin]
+expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+enforce = true
+"#;
+
 #[test]
 fn an_allowed_tool_call_reaches_the_server_and_comes_back() {
     let mut session = Session::start(PERMISSIVE, &[]);
@@ -462,4 +491,76 @@ fn the_audit_command_summarises_a_log() {
     let summary: Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(summary["by_event"]["tool_call"], 1);
     assert_eq!(summary["by_tool"]["echo"], 1);
+}
+
+#[test]
+fn a_call_that_needs_approval_is_refused_when_nobody_can_be_asked() {
+    // The test runs without a terminal, and approval is switched off, so the
+    // call has to fail closed rather than quietly go through.
+    let mut session = Session::start(ASKING, &[]);
+    let response = session.request(
+        "tools/call",
+        5,
+        json!({"name": "echo", "arguments": {"message": "hi"}}),
+    );
+    assert_eq!(response["error"]["code"], -32001);
+    assert_eq!(response["error"]["data"]["reason"], "approval_unavailable");
+    assert!(
+        !session.received().contains("tools/call"),
+        "the unapproved call reached the server: {}",
+        session.received()
+    );
+}
+
+#[test]
+fn a_credential_in_a_result_is_stripped_before_the_agent_sees_it() {
+    let mut session = Session::start(REDACTING, &["--result", "secret"]);
+    let response = session.request(
+        "tools/call",
+        1,
+        json!({"name": "echo", "arguments": {"message": "hi"}}),
+    );
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!text.contains("AKIAIOSFODNN7EXAMPLE"), "{text}");
+    assert!(text.contains("[redacted:aws_access_key_id]"), "{text}");
+}
+
+#[test]
+fn a_tool_list_that_does_not_match_the_pin_is_refused() {
+    let mut session = Session::start(PINNING, &[]);
+    let response = session.request("tools/list", 1, json!({}));
+    assert_eq!(response["error"]["code"], -32001);
+    assert_eq!(response["error"]["data"]["reason"], "tool_pin_mismatch");
+
+    let events = session.audit();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["kind"] == "tool_pin_mismatch"),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn the_audit_command_can_fail_on_a_severity() {
+    let mut session = Session::start(PERMISSIVE, &["--result", "secret"]);
+    let _ = session.request(
+        "tools/call",
+        1,
+        json!({"name": "echo", "arguments": {"message": "hi"}}),
+    );
+    let audit_path = session.directory.join("audit.jsonl");
+
+    let output = Command::new(FIREWALL)
+        .arg("audit")
+        .arg("--audit")
+        .arg(&audit_path)
+        .arg("--fail-on")
+        .arg("warning")
+        .output()
+        .expect("the audit command runs");
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
 }

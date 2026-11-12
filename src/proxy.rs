@@ -76,6 +76,17 @@ pub struct ProxyOptions {
     pub allow_approval: bool,
 }
 
+/// The result of asking a human for permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Approval {
+    /// The operator said yes.
+    Granted,
+    /// The operator said no.
+    Declined,
+    /// There was nobody to ask.
+    Unavailable,
+}
+
 /// The shared state of the two pump threads.
 struct Context {
     policy: CompiledPolicy,
@@ -387,24 +398,25 @@ impl Context {
             );
         }
 
-        let approved = match evaluation.outcome {
-            Outcome::Allow => true,
-            Outcome::Deny => false,
+        let approval = match evaluation.outcome {
+            Outcome::Allow => Approval::Granted,
+            Outcome::Deny => Approval::Declined,
             Outcome::Ask => {
                 self.ask_for_approval(&tool, &evaluation.reason, &evaluation.violations)
             }
         };
 
-        if !approved {
-            let code = if evaluation.outcome == Outcome::Ask {
-                "operator_declined"
-            } else {
-                evaluation.code
-            };
-            let reason = if evaluation.outcome == Outcome::Ask {
-                format!("tool `{tool}` was not approved")
-            } else {
-                evaluation.reason.clone()
+        if approval != Approval::Granted {
+            let (code, reason) = match (evaluation.outcome, approval) {
+                (_, Approval::Unavailable) => (
+                    "approval_unavailable",
+                    format!("tool `{tool}` needs approval and nobody could be asked"),
+                ),
+                (Outcome::Ask, _) => (
+                    "operator_declined",
+                    format!("tool `{tool}` was not approved"),
+                ),
+                _ => (evaluation.code, evaluation.reason.clone()),
             };
             self.log(
                 Event::new("tool_call_denied", Severity::Warning)
@@ -615,9 +627,18 @@ impl Context {
     }
 
     /// Asks the operator on the terminal whether a call may go through.
-    fn ask_for_approval(&self, tool: &str, reason: &str, violations: &[Violation]) -> bool {
+    fn ask_for_approval(&self, tool: &str, reason: &str, violations: &[Violation]) -> Approval {
         if !self.allow_approval {
-            return false;
+            self.log(
+                Event::new("alert", Severity::Warning)
+                    .with("kind", "approval_unavailable")
+                    .with("tool", tool)
+                    .with(
+                        "detail",
+                        "approval is switched off, so the call was refused",
+                    ),
+            );
+            return Approval::Unavailable;
         }
 
         let Ok(mut tty) = OpenOptions::new().read(true).write(true).open("/dev/tty") else {
@@ -627,7 +648,7 @@ impl Context {
                     .with("tool", tool)
                     .with("detail", "no terminal is attached, so the call was refused"),
             );
-            return false;
+            return Approval::Unavailable;
         };
 
         let mut prompt = String::new();
@@ -646,10 +667,14 @@ impl Context {
 
         let mut answer = String::new();
         if BufReader::new(&mut tty).read_line(&mut answer).is_err() {
-            return false;
+            return Approval::Unavailable;
         }
         let answer = answer.trim().to_ascii_lowercase();
-        answer == "y" || answer == "yes"
+        if answer == "y" || answer == "yes" {
+            Approval::Granted
+        } else {
+            Approval::Declined
+        }
     }
 
     /// Writes a message to the server.
