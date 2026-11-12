@@ -6,6 +6,7 @@ pub mod hash;
 pub mod inspect;
 pub mod jsonrpc;
 pub mod policy;
+pub mod proxy;
 pub mod state;
 pub mod time;
 

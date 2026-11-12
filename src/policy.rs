@@ -57,7 +57,7 @@ impl Mode {
 }
 
 /// The result of evaluating one tool call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// The call may go through.
     Allow,
@@ -74,6 +74,8 @@ pub struct Evaluation {
     pub mode: Mode,
     /// What to do with the call.
     pub outcome: Outcome,
+    /// A stable, machine readable reason code.
+    pub code: &'static str,
     /// Why, in a form suitable for an error message.
     pub reason: String,
     /// The argument rules that were broken.
@@ -390,6 +392,7 @@ impl CompiledPolicy {
             return Evaluation {
                 mode: Mode::Deny,
                 outcome: Outcome::Deny,
+                code: "deny_list",
                 reason: format!("tool `{tool}` is on the deny list"),
                 violations: Vec::new(),
             };
@@ -399,6 +402,7 @@ impl CompiledPolicy {
             return Evaluation {
                 mode: Mode::Deny,
                 outcome: Outcome::Deny,
+                code: "not_in_allow_list",
                 reason: format!("tool `{tool}` is not on the allow list"),
                 violations: Vec::new(),
             };
@@ -414,12 +418,14 @@ impl CompiledPolicy {
             Mode::Deny => Evaluation {
                 mode,
                 outcome: Outcome::Deny,
+                code: "policy_deny",
                 reason: format!("tool `{tool}` is denied by policy"),
                 violations,
             },
             Mode::Allow if !violations.is_empty() => Evaluation {
                 mode,
                 outcome: Outcome::Deny,
+                code: "argument_violation",
                 reason: format!(
                     "tool `{tool}` violates {} argument rule(s)",
                     violations.len()
@@ -429,12 +435,14 @@ impl CompiledPolicy {
             Mode::Ask => Evaluation {
                 mode,
                 outcome: Outcome::Ask,
+                code: "needs_approval",
                 reason: format!("tool `{tool}` needs approval"),
                 violations,
             },
             Mode::Allow | Mode::LogOnly => Evaluation {
                 mode,
                 outcome: Outcome::Allow,
+                code: "allowed",
                 reason: format!("tool `{tool}` is permitted"),
                 violations,
             },
