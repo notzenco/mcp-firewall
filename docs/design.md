@@ -126,11 +126,14 @@ server stdout ─► [reader thread] ◄── policy ◄── client stdout
 
 1. **Client → server.** The reader thread reads one line, parses it as JSON-RPC
    and classifies it:
-   - `tools/call` → evaluate the policy. On denial, a JSON-RPC error with the
-     *same request id* is written straight back to the client and the request
-     is **not** forwarded, so the server never sees it. Otherwise the request
-     is forwarded unchanged, and its id is recorded as "in flight" so the
-     matching response can be attributed to it.
+   - `tools/call` → evaluate the policy, whether the call arrives as a
+     request or as a notification. On denial of a request, a JSON-RPC error
+     with the *same request id* is written straight back to the client and
+     the request is **not** forwarded, so the server never sees it. A denied
+     notification cannot be answered at all (JSON-RPC forbids answering
+     notifications), so it is dropped and the denial is logged instead.
+     Otherwise the request is forwarded unchanged, and its id is recorded
+     as "in flight" so the matching response can be attributed to it.
    - anything else → forwarded unchanged and logged.
 2. **Server → client.** The reader thread reads one line, parses it as
    JSON-RPC and classifies it:
@@ -139,8 +142,9 @@ server stdout ─► [reader thread] ◄── policy ◄── client stdout
      unchanged (or replaced with a JSON-RPC error when pinning is enforced).
    - a response to a `tools/call` or `resources/read` request → the result
      payload is scanned for injection patterns, credentials and honeytokens.
-     Findings are logged. The payload is forwarded unchanged unless the policy
-     enables `redact.forward_results`.
+     Error responses are scanned too: their message is server-chosen text the
+     agent will read. Findings are logged. The payload is forwarded
+     unchanged unless the policy enables `redact.forward_results`.
    - anything else → forwarded unchanged and logged.
 
 ### 2.3 Protocol handling
