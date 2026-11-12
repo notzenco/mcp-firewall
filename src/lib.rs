@@ -2,6 +2,7 @@
 
 pub mod glob;
 pub mod inspect;
+pub mod jsonrpc;
 pub mod policy;
 pub mod time;
 
