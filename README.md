@@ -206,7 +206,9 @@ reserve:
 }
 ```
 
-The refused call never reaches the server.
+The refused call never reaches the server. A tool call sent as a
+notification (without an id) is checked too; JSON-RPC forbids answering a
+notification, so a refused one is dropped and the refusal is logged instead.
 
 ## The audit log
 
@@ -238,9 +240,12 @@ list is remembered in a `state.json` beside it.
 
 - **The proxy fails closed.** A policy that cannot be read stops the proxy
   before it starts. It never runs unprotected because of a typo.
-- **Nothing is silently dropped.** A line that cannot be parsed is forwarded
-  untouched and flagged in the log, because dropping it would leave the peer
-  waiting for an answer.
+- **Nothing is silently dropped.** A line that cannot be parsed, and a
+  JSON-RPC batch (which MCP does not support and the proxy cannot inspect),
+  are forwarded untouched and flagged in the log, because dropping them
+  would leave the peer waiting for an answer. The one message the proxy
+  does drop is a refused tool call sent as a notification, which JSON-RPC
+  forbids answering; the refusal is logged.
 - **The audit log is not optional.** If it cannot be written, the session
   stops.
 - **It is a mitigation, not a sandbox.** A malicious server running on your

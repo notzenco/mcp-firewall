@@ -185,7 +185,8 @@ The framing follows the current MCP specification (revision `2026-07-28`):
 | Policy file missing or unparseable | The proxy **refuses to start** and exits non-zero with the parse error. It never starts "unprotected". |
 | Policy refers to an unknown mode or an invalid regex | Same as above: fail closed at load time. |
 | Line from a peer is not valid JSON | Forwarded verbatim, flagged as `unparseable_message`. Dropping it would break the peer's stream. |
-| Line from a peer is valid JSON but not a JSON-RPC message | Forwarded verbatim, flagged. |
+| Line from a peer is valid JSON but not a JSON-RPC message | Forwarded verbatim, flagged at warning severity as uninspected. |
+| Line from a peer is not valid UTF-8 | That direction of the proxy stops and the session ends. The specification requires UTF-8 throughout; this is the one input the proxy cannot forward verbatim, because its framing is line-based text. |
 | Server exits unexpectedly | The proxy logs it, exits with the child's status, and stops. |
 | Policy denies a call | A JSON-RPC error with code `-32001` (application-defined, outside the JSON-RPC and MCP reserved ranges) and the *same request id* is returned to the client. The request is not forwarded. |
 | Policy needs human approval but no TTY is attached | The call is denied. `ask` never degrades to `allow`. |
