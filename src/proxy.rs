@@ -385,6 +385,13 @@ impl Context {
                 Event::new("alert", Severity::Warning)
                     .with("kind", "credential_in_arguments")
                     .with("tool", tool.clone())
+                    .with(
+                        "detail",
+                        format!(
+                            "the arguments of `{tool}` carry {} finding(s)",
+                            findings.len()
+                        ),
+                    )
                     .with("findings", findings_json(&findings)),
             );
         }
@@ -394,6 +401,13 @@ impl Context {
                 Event::new("alert", Severity::Warning)
                     .with("kind", "argument_violation")
                     .with("tool", tool.clone())
+                    .with(
+                        "detail",
+                        format!(
+                            "`{tool}` breaks {} argument rule(s), which are not enforced here",
+                            evaluation.violations.len()
+                        ),
+                    )
                     .with("violations", violations_json(&evaluation.violations))
                     .with("enforced", false),
             );
@@ -584,7 +598,14 @@ impl Context {
             self.log(
                 Event::new("alert", Severity::Error)
                     .with("kind", "poisoned_tool_description")
-                    .with("tool", name)
+                    .with("tool", name.clone())
+                    .with(
+                        "detail",
+                        format!(
+                            "the definition of `{name}` carries {} finding(s)",
+                            findings.len()
+                        ),
+                    )
                     .with("findings", findings_json(&findings)),
             );
         }
@@ -609,6 +630,13 @@ impl Context {
             Event::new("alert", Severity::Error)
                 .with("kind", "poisoned_server_instructions")
                 .with("id", message.id.clone().unwrap_or(Value::Null))
+                .with(
+                    "detail",
+                    format!(
+                        "the server's instructions carry {} finding(s)",
+                        findings.len()
+                    ),
+                )
                 .with("findings", findings_json(&findings)),
         );
     }
@@ -633,6 +661,13 @@ impl Context {
                     .with("kind", "suspicious_tool_result")
                     .with("method", method)
                     .with("id", message.id.clone().unwrap_or(Value::Null))
+                    .with(
+                        "detail",
+                        format!(
+                            "the result of `{method}` carries {} finding(s)",
+                            findings.len()
+                        ),
+                    )
                     .with("findings", findings_json(&findings)),
             );
         }

@@ -369,6 +369,12 @@ fn a_poisoned_tool_description_is_reported() {
         .find(|event| event["event"] == "alert" && event["kind"] == "poisoned_tool_description")
         .expect("the poisoned description is reported");
     assert_eq!(alert["tool"], "read_file");
+    // The audit summary renders alerts as `kind: detail`, so an alert
+    // without a detail reads as an empty headline.
+    assert!(
+        alert["detail"].as_str().is_some_and(|d| !d.is_empty()),
+        "{alert}"
+    );
 }
 
 #[test]
@@ -388,6 +394,10 @@ fn poisoned_server_instructions_are_reported() {
         .find(|event| event["event"] == "alert" && event["kind"] == "poisoned_server_instructions")
         .expect("the poisoned instructions are reported");
     assert!(!alert["findings"].as_array().unwrap().is_empty(), "{alert}");
+    assert!(
+        alert["detail"].as_str().is_some_and(|d| !d.is_empty()),
+        "{alert}"
+    );
 }
 
 #[test]
