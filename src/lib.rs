@@ -1,5 +1,6 @@
 //! mcp-firewall: a security proxy for MCP traffic.
 
+pub mod audit;
 pub mod glob;
 pub mod inspect;
 pub mod jsonrpc;

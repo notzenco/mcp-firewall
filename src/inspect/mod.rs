@@ -17,7 +17,8 @@ use serde_json::Value;
 use crate::policy::{CompiledPattern, RedactConfig};
 
 /// How serious a finding is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,
     Warning,
