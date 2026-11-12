@@ -218,53 +218,60 @@ readable object:
 The policy is a TOML file. It is parsed once, at start-up; an invalid policy
 is a start-up failure.
 
+The whole policy lives inside one `[policy]` table, so the order of the
+sections in the file never matters. A top level key written after a table
+header is a classic TOML trap, and a policy file should not be able to fail
+because of where somebody put a line.
+
 ```toml
-# mcp-firewall policy
+[policy]
+# The schema version. Only 1 is understood.
 version = 1
 
-[defaults]
+[policy.defaults]
 # Mode for tools that no rule matches.
 # One of: allow | ask | deny | log-only
 mode = "log-only"
 
-# Optional convenience filters, applied before the per-tool rules.
+[policy.filters]
+# Optional filters, applied before the per-tool rules.
 # Names may be globs. deny_tools always wins.
 deny_tools = ["*_admin", "shell_exec"]
 # When allow_tools is non-empty, every tool outside it is denied.
 allow_tools = []
 
 # Per-tool rules. The first rule whose name matches wins.
-[[tools]]
+[[policy.tools]]
 name = "read_file"
 mode = "allow"
 
   # Argument rules. `name` matches the argument's own key, or its full
   # path inside `arguments` (for example "files[0].path").
-  [[tools.args]]
+  [[policy.tools.args]]
   name = "path"
   allow = ["/Users/me/project/**"]
   deny = ["/Users/me/.ssh/**"]
   max_bytes = 4096
 
-  [[tools.args]]
+  [[policy.tools.args]]
   name = "content"
   max_bytes = 1048576
   deny_regex = "AKIA[0-9A-Z]{16}"
 
 # Secret redaction.
-[redact]
+[policy.redact]
 # Use the built-in credential patterns.
 builtin = true
 # Also strip credentials from tool results before the agent sees them.
 forward_results = false
 
 # Extra patterns.
-[[redact.patterns]]
+[[policy.redact.patterns]]
 name = "internal_token"
 regex = "INTERNAL-[A-Z0-9]{16}"
 
 # Tool definition pinning.
-[pin]
+[policy.pin]
 # Hex sha256 of the canonical tool list. Optional.
 expected_sha256 = "…"
 # Refuse a tools/list whose hash differs from expected_sha256.
@@ -312,10 +319,10 @@ whole `arguments` object.
 
 For `tools/call` with tool name `T` and arguments `A`:
 
-1. If `T` matches `deny_tools` → deny, reason `deny_list`.
-2. If `allow_tools` is non-empty and `T` does not match it → deny, reason
-   `not_in_allow_list`.
-3. Otherwise the mode is the first matching `[[tools]]` rule's mode, or
+1. If `T` matches `filters.deny_tools` → deny, reason `deny_list`.
+2. If `filters.allow_tools` is non-empty and `T` does not match it → deny,
+   reason `not_in_allow_list`.
+3. Otherwise the mode is the first matching `[[policy.tools]]` rule's mode, or
    `defaults.mode`.
 4. The argument rules of that rule (if any) are evaluated against `A`,
    producing a list of violations.
@@ -342,7 +349,6 @@ The observed hash is compared with:
   which is the baseline for drift detection across restarts. A change is
   logged as `tool_definition_changed`, together with the added, removed and
   modified tool names and a per-field diff of what changed.
-
 ---
 
 ## 4. Inspection

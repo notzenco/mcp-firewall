@@ -96,6 +96,19 @@ pub struct Violation {
 
 // --- The TOML shapes -------------------------------------------------------
 
+/// The whole file, which holds a single `policy` table.
+///
+/// The policy lives inside one table so that the order of the sections in
+/// the file never matters: a top level key written after a table header is a
+/// classic TOML trap, and a policy file should not be able to fail because
+/// of where somebody put a line.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyDocument {
+    /// The policy itself.
+    pub policy: Policy,
+}
+
 /// A policy file, as written.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,12 +117,9 @@ pub struct Policy {
     pub version: u32,
     #[serde(default)]
     pub defaults: Defaults,
-    /// Tool name globs that are always refused.
+    /// Which tools are permitted or refused outright.
     #[serde(default)]
-    pub deny_tools: Vec<String>,
-    /// When non-empty, tool name globs that are the only ones permitted.
-    #[serde(default)]
-    pub allow_tools: Vec<String>,
+    pub filters: Filters,
     /// Per-tool rules. The first matching rule wins.
     #[serde(default)]
     pub tools: Vec<ToolRule>,
@@ -117,6 +127,18 @@ pub struct Policy {
     pub redact: Redact,
     #[serde(default)]
     pub pin: Pin,
+}
+
+/// Filters that apply before the per-tool rules.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Filters {
+    /// Tool name globs that are always refused.
+    #[serde(default)]
+    pub deny_tools: Vec<String>,
+    /// When non-empty, tool name globs that are the only ones permitted.
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
 }
 
 /// Defaults that apply when nothing more specific matches.
@@ -289,9 +311,9 @@ pub struct CompiledPolicy {
 impl CompiledPolicy {
     /// Parses a policy from TOML text and compiles it.
     pub fn parse(text: &str) -> Result<Self, PolicyError> {
-        let policy: Policy =
+        let document: PolicyDocument =
             toml::from_str(text).map_err(|source| PolicyError::Parse { source })?;
-        Self::from_policy(policy)
+        Self::from_policy(document.policy)
     }
 
     /// Reads a policy file and compiles it.
@@ -312,8 +334,8 @@ impl CompiledPolicy {
             )));
         }
 
-        let deny_tools = compile_globs(&policy.deny_tools, "deny_tools")?;
-        let allow_tools = compile_globs(&policy.allow_tools, "allow_tools")?;
+        let deny_tools = compile_globs(&policy.filters.deny_tools, "deny_tools")?;
+        let allow_tools = compile_globs(&policy.filters.allow_tools, "allow_tools")?;
 
         let mut tools = Vec::with_capacity(policy.tools.len());
         for rule in &policy.tools {
@@ -638,7 +660,7 @@ mod tests {
 
     #[test]
     fn a_minimal_policy_defaults_to_log_only() {
-        let p = policy("version = 1\n");
+        let p = policy("[policy]\nversion = 1\n");
         assert_eq!(p.mode_for("anything"), Mode::LogOnly);
         let evaluation = p.evaluate("anything", &json!({}));
         assert_eq!(evaluation.outcome, Outcome::Allow);
@@ -646,19 +668,27 @@ mod tests {
 
     #[test]
     fn an_unknown_version_is_refused() {
-        let err = CompiledPolicy::parse("version = 2\n").unwrap_err();
+        let err = CompiledPolicy::parse("[policy]\nversion = 2\n").unwrap_err();
         assert!(matches!(err, PolicyError::Invalid(_)));
     }
 
     #[test]
     fn an_unknown_key_is_refused() {
-        let err = CompiledPolicy::parse("version = 1\nmdoe = \"allow\"\n").unwrap_err();
+        let err = CompiledPolicy::parse("[policy]\nversion = 1\nmdoe = \"allow\"\n").unwrap_err();
         assert!(matches!(err, PolicyError::Parse { .. }));
     }
 
     #[test]
+    fn the_order_of_the_sections_does_not_matter() {
+        let text = "[policy]\nversion = 1\n\n[policy.pin]\nenforce = true\n\n[policy.defaults]\nmode = \"deny\"\n";
+        let policy = policy(text);
+        assert_eq!(policy.mode_for("anything"), Mode::Deny);
+        assert!(policy.pin.enforce);
+    }
+
+    #[test]
     fn an_invalid_regex_is_refused() {
-        let text = "version = 1\n[redact]\n[[redact.patterns]]\nname = \"x\"\nregex = \"(\"\n";
+        let text = "[policy]\nversion = 1\n[policy.redact]\n[[policy.redact.patterns]]\nname = \"x\"\nregex = \"(\"\n";
         let err = CompiledPolicy::parse(text).unwrap_err();
         assert!(matches!(err, PolicyError::Invalid(_)));
     }
@@ -667,10 +697,13 @@ mod tests {
     fn the_deny_list_wins_over_everything() {
         let p = policy(
             r#"
+[policy]
 version = 1
+
+[policy.filters]
 deny_tools = ["shell_*"]
 
-[[tools]]
+[[policy.tools]]
 name = "shell_exec"
 mode = "allow"
 "#,
@@ -684,7 +717,10 @@ mode = "allow"
     fn a_non_empty_allow_list_denies_everything_else() {
         let p = policy(
             r#"
+[policy]
 version = 1
+
+[policy.filters]
 allow_tools = ["read_*"]
 "#,
         );
@@ -696,12 +732,13 @@ allow_tools = ["read_*"]
     fn the_first_matching_rule_wins() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "read_*"
 mode = "allow"
 
-[[tools]]
+[[policy.tools]]
 name = "read_file"
 mode = "deny"
 "#,
@@ -713,12 +750,13 @@ mode = "deny"
     fn a_path_rule_blocks_values_outside_the_allowed_tree() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "read_file"
 mode = "allow"
 
-[[tools.args]]
+[[policy.tools.args]]
 name = "path"
 allow = ["/srv/project/**"]
 "#,
@@ -736,12 +774,13 @@ allow = ["/srv/project/**"]
     fn a_deny_rule_blocks_a_matching_value() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "read_file"
 mode = "allow"
 
-[[tools.args]]
+[[policy.tools.args]]
 name = "path"
 deny = ["/srv/project/.env"]
 "#,
@@ -755,12 +794,13 @@ deny = ["/srv/project/.env"]
     fn a_regex_rule_requires_a_match() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "query"
 mode = "allow"
 
-[[tools.args]]
+[[policy.tools.args]]
 name = "sql"
 regex = "^SELECT "
 "#,
@@ -778,12 +818,13 @@ regex = "^SELECT "
     fn a_size_limit_is_enforced() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "write"
 mode = "allow"
 
-[[tools.args]]
+[[policy.tools.args]]
 name = "content"
 max_bytes = 4
 "#,
@@ -801,8 +842,9 @@ max_bytes = 4
     fn a_total_size_limit_is_enforced() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "write"
 mode = "allow"
 max_total_bytes = 10
@@ -817,12 +859,13 @@ max_total_bytes = 10
     fn nested_arguments_are_reached_by_key_and_by_path() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "copy"
 mode = "allow"
 
-[[tools.args]]
+[[policy.tools.args]]
 name = "path"
 deny = ["/etc/**"]
 "#,
@@ -836,12 +879,13 @@ deny = ["/etc/**"]
     fn log_only_records_violations_without_blocking() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "read_file"
 mode = "log-only"
 
-[[tools.args]]
+[[policy.tools.args]]
 name = "path"
 allow = ["/srv/**"]
 "#,
@@ -855,8 +899,9 @@ allow = ["/srv/**"]
     fn ask_asks() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "write_file"
 mode = "ask"
 "#,
@@ -868,8 +913,9 @@ mode = "ask"
     fn deny_refuses() {
         let p = policy(
             r#"
+[policy]
 version = 1
-[[tools]]
+[[policy.tools]]
 name = "write_file"
 mode = "deny"
 "#,
@@ -881,7 +927,7 @@ mode = "deny"
 
     #[test]
     fn a_bad_pin_digest_is_refused() {
-        let text = "version = 1\n[pin]\nexpected_sha256 = \"nope\"\n";
+        let text = "[policy]\nversion = 1\n[policy.pin]\nexpected_sha256 = \"nope\"\n";
         assert!(matches!(
             CompiledPolicy::parse(text).unwrap_err(),
             PolicyError::Invalid(_)
