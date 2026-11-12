@@ -130,6 +130,7 @@ impl AuditLog {
 
 /// A count of something in the log.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(transparent)]
 pub struct Counts {
     /// How many of each key.
     pub counts: BTreeMap<String, usize>,

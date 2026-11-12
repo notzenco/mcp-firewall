@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn finds_a_honeytoken_and_redacts_it() {
-        let id = tripwire::id_for_testing("ABC234");
+        let id = tripwire::make_id("ABC234");
         let marker = tripwire::MARKER;
         let text = format!("AWS_ACCESS_KEY_ID=AKIA{marker}{id}TAILVALUE");
         let findings = scanner().scan_text(&text);

@@ -95,8 +95,9 @@ fn check_chars(random: &str) -> String {
 
 /// Builds an id with a valid checksum from a random part.
 ///
-/// Used by the tests to produce values the scanner must recognise.
-pub fn id_for_testing(random: &str) -> String {
+/// This only makes the checksum correct; the value it is used in is a
+/// fixture, never a real credential.
+pub fn make_id(random: &str) -> String {
     format!("{random}{}", check_chars(random))
 }
 
@@ -106,7 +107,7 @@ mod tests {
 
     #[test]
     fn finds_a_well_formed_honeytoken() {
-        let id = id_for_testing("ABC234");
+        let id = make_id("ABC234");
         let text = format!("AWS_ACCESS_KEY_ID=AKIA{MARKER}{id}EXTRATAILVALUE");
         let hits = scan(&text);
         assert_eq!(hits.len(), 1);
@@ -121,7 +122,7 @@ mod tests {
 
     #[test]
     fn a_corrupted_checksum_is_not_a_honeytoken() {
-        let id = id_for_testing("ABC234");
+        let id = make_id("ABC234");
         let mut broken: Vec<char> = id.chars().collect();
         let last = broken.len() - 1;
         broken[last] = if broken[last] == 'A' { 'B' } else { 'A' };
@@ -131,7 +132,7 @@ mod tests {
 
     #[test]
     fn the_marker_is_matched_case_insensitively() {
-        let id = id_for_testing("ABC234");
+        let id = make_id("ABC234");
         let hits = scan(&format!("tripwire{id}"));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, id);
@@ -139,7 +140,7 @@ mod tests {
 
     #[test]
     fn the_span_covers_the_trailing_secret_material() {
-        let id = id_for_testing("ABC234");
+        let id = make_id("ABC234");
         let text = format!("AKIA{MARKER}{id}SECRETTAIL");
         let hits = scan(&text);
         assert_eq!(hits[0].value_end, text.len());
