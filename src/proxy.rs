@@ -19,6 +19,7 @@ use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -102,6 +103,11 @@ struct Context {
     server_in: Mutex<Option<ChildStdin>>,
     /// The client's output.
     client_out: Mutex<Option<std::io::Stdout>>,
+    /// Set when the audit log could not be written. The proxy never runs
+    /// unlogged, so both pumps stop at their next line.
+    abort: AtomicBool,
+    /// The first audit failure, for the error `run` returns.
+    audit_failure: Mutex<Option<String>>,
 }
 
 /// Runs the proxy until the client or the server goes away.
@@ -137,6 +143,8 @@ pub fn run(options: ProxyOptions, command: &[String]) -> Result<(), ProxyError> 
         pending: Mutex::new(HashMap::new()),
         server_in: Mutex::new(Some(server_in)),
         client_out: Mutex::new(Some(std::io::stdout())),
+        abort: AtomicBool::new(false),
+        audit_failure: Mutex::new(None),
     });
 
     context.log(
@@ -182,6 +190,25 @@ pub fn run(options: ProxyOptions, command: &[String]) -> Result<(), ProxyError> 
         ),
     );
 
+    if let Some(failure) = context
+        .audit_failure
+        .lock()
+        .expect("audit failure is not poisoned")
+        .take()
+    {
+        let path = context
+            .audit
+            .lock()
+            .expect("audit log is not poisoned")
+            .path()
+            .display()
+            .to_string();
+        return Err(ProxyError::Audit(AuditError::Write {
+            path,
+            source: std::io::Error::other(failure),
+        }));
+    }
+
     Ok(())
 }
 
@@ -211,6 +238,9 @@ impl Context {
         let mut line = String::new();
 
         loop {
+            if self.abort.load(Ordering::SeqCst) {
+                break;
+            }
             line.clear();
             match reader.read_line(&mut line) {
                 Ok(0) => break,
@@ -242,6 +272,9 @@ impl Context {
         let mut line = String::new();
 
         loop {
+            if self.abort.load(Ordering::SeqCst) {
+                break;
+            }
             line.clear();
             match reader.read_line(&mut line) {
                 Ok(0) => break,
@@ -836,10 +869,25 @@ impl Context {
     }
 
     /// Writes an event to the audit log.
+    ///
+    /// A failed write aborts the session: continuing would mean traffic
+    /// crossing the proxy with no record of it, which is the one thing
+    /// the audit log exists to prevent.
     fn log(&self, event: Event) {
+        if self.abort.load(Ordering::SeqCst) {
+            return;
+        }
         let mut audit = self.audit.lock().expect("audit log is not poisoned");
         if let Err(error) = audit.write(&event) {
             eprintln!("mcp-firewall: cannot write to the audit log: {error}");
+            let mut failure = self
+                .audit_failure
+                .lock()
+                .expect("audit failure is not poisoned");
+            if failure.is_none() {
+                *failure = Some(error.to_string());
+            }
+            self.abort.store(true, Ordering::SeqCst);
         }
     }
 }

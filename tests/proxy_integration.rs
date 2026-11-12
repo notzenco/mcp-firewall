@@ -664,3 +664,52 @@ fn a_tool_call_sent_as_a_notification_is_still_checked() {
         "{events:?}"
     );
 }
+
+#[test]
+fn an_audit_log_that_cannot_be_written_stops_the_proxy() {
+    // The design promises the proxy never runs unlogged: if the audit
+    // log cannot be written, the session aborts. A zero file-size limit
+    // makes every write to a regular file fail (pipes are unaffected),
+    // which is exactly that failure, on macOS and Linux alike.
+    let directory = tempfile::tempdir().expect("a temporary directory").keep();
+    let policy_path = directory.join("policy.toml");
+    std::fs::write(&policy_path, PERMISSIVE).expect("the policy can be written");
+
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("trap '' XFSZ; ulimit -f 0; exec \"$@\"")
+        .arg("sh")
+        .arg(FIREWALL)
+        .arg("run")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--audit")
+        .arg(directory.join("audit.jsonl"))
+        .arg("--state")
+        .arg(directory.join("state.json"))
+        .arg("--no-approval")
+        .arg("--")
+        .arg(fake_server())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the proxy starts");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        match child.try_wait().expect("the proxy can be polled") {
+            Some(status) => break Some(status),
+            None if std::time::Instant::now() >= deadline => break None,
+            None => std::thread::sleep(std::time::Duration::from_millis(25)),
+        }
+    };
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+
+    let status = status.expect("the proxy aborts instead of running unlogged");
+    assert!(!status.success(), "{status}");
+}
