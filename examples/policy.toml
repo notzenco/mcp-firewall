@@ -1,0 +1,76 @@
+# A worked example policy for mcp-firewall.
+#
+# The whole policy lives inside one [policy] table, so the order of the
+# sections in the file does not matter.
+
+[policy]
+version = 1
+
+# What to do with a tool that no rule below matches.
+# One of: allow | ask | deny | log-only
+#
+# log-only is the safe default: the call goes through, but anything that
+# breaks a rule is reported in the audit log. Move a tool to allow once you
+# are happy with what it does.
+[policy.defaults]
+mode = "log-only"
+
+# Filters, applied before the per-tool rules.
+[policy.filters]
+# Tool names may be globs. These are always refused.
+deny_tools = ["*_admin", "shell_exec", "run_command"]
+# When this list is not empty, every tool outside it is refused. Leave it
+# empty to allow anything the rules below do not mention.
+allow_tools = []
+
+# Per-tool rules. The first rule whose name matches wins.
+[[policy.tools]]
+name = "read_file"
+mode = "allow"
+description = "Read files, but only from the project tree."
+
+  # Argument rules. `name` matches the argument's own key, or its path
+  # inside `arguments`, for example "files[0].path".
+  [[policy.tools.args]]
+  name = "path"
+  allow = ["/Users/you/project/**"]
+  deny = ["/Users/you/project/.env", "/Users/you/.ssh/**", "/Users/you/.aws/**"]
+  max_bytes = 4096
+
+[[policy.tools]]
+name = "write_file"
+mode = "ask"
+description = "Writing needs a human, because it can damage real work."
+
+  [[policy.tools.args]]
+  name = "path"
+  allow = ["/Users/you/project/**"]
+  deny = ["/Users/you/project/.git/**"]
+  max_bytes = 1048576
+
+[[policy.tools]]
+name = "fetch"
+mode = "deny"
+description = "No network calls from tools, whatever they say."
+
+# Secret redaction.
+[policy.redact]
+# Use the built-in credential patterns.
+builtin = true
+# Also strip credentials from tool results before the agent sees them.
+# This changes what the agent reads, so it is off by default.
+forward_results = false
+
+# Extra patterns, matched alongside the built-in ones.
+[[policy.redact.patterns]]
+name = "internal_token"
+regex = "INTERNAL-[A-Z0-9]{16}"
+
+# Tool definition pinning.
+#
+# Put the digest of the tool list you approved in `expected_sha256`, and set
+# `enforce = true` to refuse a list that does not match it. Leave it empty to
+# only be told when the list changes.
+[policy.pin]
+expected_sha256 = ""
+enforce = false

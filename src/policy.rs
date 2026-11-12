@@ -367,13 +367,19 @@ impl CompiledPolicy {
             });
         }
 
-        if let Some(expected) = &policy.pin.expected_sha256
-            && !is_sha256_hex(expected)
-        {
-            return Err(PolicyError::Invalid(format!(
-                "pin.expected_sha256 is not a 64 character hex digest: `{expected}`"
-            )));
-        }
+        // An empty digest means "not pinned", so a policy file can carry the
+        // key without having to be edited before it is used.
+        let expected_sha256 = match policy.pin.expected_sha256.as_deref() {
+            None | Some("") => None,
+            Some(expected) => {
+                if !is_sha256_hex(expected) {
+                    return Err(PolicyError::Invalid(format!(
+                        "pin.expected_sha256 is not a 64 character hex digest: `{expected}`"
+                    )));
+                }
+                Some(expected.to_string())
+            }
+        };
 
         Ok(Self {
             version: policy.version,
@@ -386,7 +392,10 @@ impl CompiledPolicy {
                 forward_results: policy.redact.forward_results,
                 patterns,
             },
-            pin: policy.pin,
+            pin: Pin {
+                expected_sha256,
+                enforce: policy.pin.enforce,
+            },
         })
     }
 
@@ -932,5 +941,12 @@ mode = "deny"
             CompiledPolicy::parse(text).unwrap_err(),
             PolicyError::Invalid(_)
         ));
+    }
+
+    #[test]
+    fn an_empty_pin_digest_means_not_pinned() {
+        let text = "[policy]\nversion = 1\n[policy.pin]\nexpected_sha256 = \"\"\n";
+        let policy = policy(text);
+        assert!(policy.pin.expected_sha256.is_none());
     }
 }
