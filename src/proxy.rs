@@ -298,7 +298,10 @@ impl Context {
             return;
         }
 
-        if message.is_request() && message.has_method(jsonrpc::METHOD_TOOLS_CALL) {
+        // Requests and notifications alike: a tools/call sent without an
+        // id must not bypass the policy just because there is no id to
+        // answer with.
+        if message.has_method(jsonrpc::METHOD_TOOLS_CALL) {
             self.handle_tool_call(raw, &message);
             return;
         }
@@ -489,7 +492,12 @@ impl Context {
                     .with("reason", reason.clone())
                     .with("id", message.id.clone().unwrap_or(Value::Null)),
             );
-            self.deny(message, &tool, code, &reason, &evaluation.violations);
+            // A notification must never be answered, not even with an
+            // error. Dropping it is the only protocol-correct refusal,
+            // and the denial above is its audit trail.
+            if message.kind != jsonrpc::Kind::Notification {
+                self.deny(message, &tool, code, &reason, &evaluation.violations);
+            }
             return;
         }
 

@@ -634,3 +634,33 @@ fn a_batch_is_forwarded_but_flagged_as_uninspected() {
     );
     assert!(session.received().contains("\"method\":\"ping\""));
 }
+
+#[test]
+fn a_tool_call_sent_as_a_notification_is_still_checked() {
+    // A tools/call without an id is a notification, so it expects no
+    // answer. It must not slip past the policy just because there is no
+    // id to answer with: a denied one is dropped and logged, and the
+    // client hears nothing, exactly as a notification requires.
+    let mut session = Session::start(DENYING, &[]);
+    session.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {"name": "read_file", "arguments": {"path": "/etc/passwd"}},
+    }));
+    let response = session.request("ping", 1, json!({}));
+    assert_eq!(response["id"], 1);
+    assert!(response.get("error").is_none(), "{response}");
+
+    assert!(
+        !session.received().contains("tools/call"),
+        "the denied call reached the server: {}",
+        session.received()
+    );
+    let events = session.audit();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"] == "tool_call_denied" && event["tool"] == "read_file"),
+        "{events:?}"
+    );
+}
