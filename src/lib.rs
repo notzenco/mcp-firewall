@@ -2,9 +2,11 @@
 
 pub mod audit;
 pub mod glob;
+pub mod hash;
 pub mod inspect;
 pub mod jsonrpc;
 pub mod policy;
+pub mod state;
 pub mod time;
 
 /// Version reported by `mcp-firewall version`.
